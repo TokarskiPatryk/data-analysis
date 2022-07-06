@@ -1,0 +1,114 @@
+---
+title: "BigBasket Products analysis"
+author: "Patryk Tokarski"
+date: '2022-07-05'
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+	echo = TRUE,
+	message = FALSE,
+	warning = FALSE,
+	dev = "CairoPNG"
+)
+knitr::opts_chunk$set(dev='CairoPNG')
+```
+
+### Loading database
+```{r}
+library(tidyverse)
+
+# loading database without index and desc column
+df <- read.csv("BigBasket Products.csv") %>% select(-index,-description)
+
+# factor distinct columns
+df <- df %>% mutate(category=as_factor(category),
+              sub_category=as_factor(sub_category),
+              brand=as_factor(brand),
+              type=as_factor(type))
+# adding discount column
+df <- df %>% mutate(discount=round((market_price-sale_price)/market_price, digits = 3))
+```
+### Summary the data
+```{r}
+summary(df)
+```
+### % of NA's in rating category
+```{r}
+df %>% summarise(perc_of_na_rating = sum(is.na(rating))/n()*100)
+```
+#### About 31% of rating data don't have value.
+
+### Data structure
+```{r}
+str(df)
+```
+
+### The most popular rating is about 4.
+```{r}
+df %>% ggplot(aes(x=rating, fill=..x..))+
+  geom_histogram(show.legend = F)+
+  scale_fill_gradient(low="red", high="green")
+```
+
+### What is the share of each category
+
+```{r}
+df %>% 
+  group_by(category) %>% 
+  summarise(count=n()) %>% 
+  mutate(perc=count/sum(count)) %>% 
+  arrange(count)%>% 
+  ggplot(aes(y=fct_reorder(category, count), x=perc*100, fill=category))+
+  geom_col(show.legend = F)+
+  labs(x="Percent", y="", title = "Percentage of a category")+
+  theme_minimal()
+```
+
+#### About 30% items are from Beauty category.
+
+
+### Which brands have the best rating?
+```{r}
+df2 <- df %>% group_by(brand) %>% 
+  filter(!is.na(rating)) %>% 
+  summarise(mean_rating = mean(rating), n_element = n()) %>% 
+  arrange(desc(mean_rating))
+# top rating brands which have more than 4 products
+df2 %>% filter(n_element>4) %>% head(10) %>% select(-n_element)
+```
+
+```{r}
+# top rating brands which have more than 9 products
+df2 %>% filter(n_element>9) %>% head(10) %>% select(-n_element)
+```
+### Discounts for each category?
+```{r}
+df %>% ggplot(aes(y=category, x=discount, color=category)) +
+  geom_boxplot(show.legend=F)
+```
+
+#### The vast majority of discounts are from 0 to 20%.
+
+#### We can see that there are suspiciously many values around 0.2  in the Fruits & Vegetables category.
+```{r}
+df %>% filter(category=="Fruits & Vegetables") %>% 
+  summarise(discout_equal_0.2 =sum(discount==0.2)/n())
+```
+
+#### 87% of products from the Fruits & Vegetables category have 20% discount.
+
+
+### Does discounting affect product rating?
+```{r}
+
+df %>% na.omit(rating) %>% 
+ggplot(aes(discount, rating))+
+geom_point()+
+geom_smooth()+
+facet_wrap(vars(category))
+
+```
+
+#### There is huge spread and it seems that discounting doesn't affect rating. For each category rating is about 4.
