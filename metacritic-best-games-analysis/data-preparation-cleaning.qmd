@@ -1,0 +1,85 @@
+---
+title: "Najlepsze gry wszech czasów"
+author: "Patryk Tokarski"
+format: 
+  html:
+    self-contained: true
+    echo: false
+    warning: false
+    message: false
+editor: visual
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r}
+# pobieranie danych ze strony 
+# https://www.metacritic.com/browse/games/score/metascore/all/all/filtered?sort=desc&view=detailed
+library(tidyverse)
+library(rvest)
+library(knitr)
+
+# downloading data best games of all time everywhere
+best_games_all_time <- "https://www.metacritic.com/browse/games/score/metascore/all/all/filtered?sort=desc&view=detailed"
+
+best_games_2022 <- "https://www.metacritic.com/browse/games/score/metascore/year/all/filtered?year_selected=2022&distribution=&sort=desc&view=detailed"
+
+
+
+
+get_games <- function(url)
+{
+  pages <- read_html(url) %>% 
+  html_nodes(".clamp-metascore .positive , .platform+ span , .platform .data , .title h3, .user") %>% 
+  html_text()
+
+  # data cleaning
+  lngth <- length(pages)
+  features <- 5
+  title <- pages[seq(1,lngth, features)]
+  platform <- pages[seq(2,lngth, features)] %>% 
+    str_replace_all("[:white_space:]","") %>% 
+    parse_factor()
+  release_date <- pages[seq(3,lngth, features)] %>% parse_date(format = "%B %d, %Y")
+  critic_score <- pages[seq(4,lngth, features)] %>% parse_number()
+  user_score <- pages[seq(5,lngth, features)] %>% parse_number(na = "tbd")
+  user_score <- user_score*10
+  
+  df <- tibble(title, platform, release_date, critic_score, user_score)
+  return(df)
+}
+
+best_games <- function(from, to)
+{
+  df <- vector(mode = "list", length = 0)
+  url <- "https://www.metacritic.com/browse/games/score/metascore/year/all/filtered?distribution=&sort=desc&view=detailed"
+  for (i in from:to) {
+    print(i)
+    url2 <- paste(url,"&year_selected=",i,sep = "")
+    df[[i-from+1]] <- get_games(url2)
+  }
+  return(df)
+}
+#
+best_2013_2022 <- best_games(2013,2022)
+write_rds(best_2013_2022, "best_games_2013_2022.rds")
+
+best_all_times <- best_games_all_time %>% get_games()
+write_rds(best_all_times, "best_games.rds")
+
+best_2022 <- best_games_2022 %>% get_games()
+write_rds(best_2022, "best_games_2022.rds")
+
+```
+
+W rankingu są uwzględniane gry, które posiadają przynajmniej 7 recenzji.
+
+```{r}
+# gdy bede chcial dodatkowo miec ilosc recenzji i gatunek
+
+url <- "https://www.metacritic.com/browse/games/score/metascore/all/all/filtered?sort=desc&view=detailed"
+
+pages <- read_html(url) %>% 
+  html_nodes(".clamp-image-wrap a") %>% html_attrs()
+
+```
