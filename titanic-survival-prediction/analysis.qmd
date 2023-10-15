@@ -1,0 +1,25 @@
+---
+title: "Titanic survival prediction"
+format: html
+editor: visual
+---
+
+```{r}
+#| echo: false
+#| warning: false
+library(tidyverse)
+```
+
+```{r}
+df <- read.csv("train.csv")
+df$Sex <- factor(df$Sex)
+df$Pclass <- factor(df$Pclass)
+glm.fits <- glm(
+  Survived ~ Sex + Pclass+Age, 
+  family = binomial,
+  data=df
+)
+
+summary(glm.fits)
+
+```
