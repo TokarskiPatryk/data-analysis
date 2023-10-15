@@ -11,15 +11,33 @@ library(tidyverse)
 ```
 
 ```{r}
+library(caret)
 df <- read.csv("train.csv")
+df$Survived <- factor(df$Survived)
 df$Sex <- factor(df$Sex)
 df$Pclass <- factor(df$Pclass)
+
+index <- createDataPartition(df$Survived, p = 0.7, list = FALSE)
+train_data <- df[index, ]
+test_data <- df[-index, ]
+
 glm.fits <- glm(
   Survived ~ Sex + Pclass+Age, 
   family = binomial,
-  data=df
+  data=train_data
 )
 
 summary(glm.fits)
+probs <- predict(glm.fits, newdata = test_data, type = "response")
+pred <- rep(0, length(probs))
+pred[probs > .5] <- 1
 
+table(pred, test_data$Survived)
+```
+
+f1 score
+
+```{r}
+library(ModelMetrics)
+f1Score(test_data$Survived, pred)
 ```
