@@ -1,17 +1,65 @@
 ---
 title: "Titanic survival prediction"
 format: html
+embed-resources: true
 editor: visual
+editor_options: 
+  chunk_output_type: console
 ---
 
 ```{r}
 #| echo: false
 #| warning: false
 library(tidyverse)
+library(caret)
 ```
 
 ```{r}
-library(caret)
+df <- read.csv("train.csv")
+df <- drop_na(df, Age)
+df$Survived <- factor(df$Survived)
+df$Sex <- factor(df$Sex)
+df$Pclass <- factor(df$Pclass)
+```
+
+```{r}
+summary(df)
+```
+
+Comparing survival rate of different classes
+```{r}
+#plot(df$Survived, as.numeric(df$Pclass))
+```
+There is a significantly larger number of Class 3 individuals who did not survive compared to those who survived.
+```{r}
+plot(df$Survived, df$Sex)
+```
+There is even larger difference between male and female passengers. Males were more probably to not survive.
+```{r}
+plot(df$Survived, df$Age)
+```
+For age, there is not a significant visible difference between those who survived, and those who do not. But we will run a test to compare two means.
+
+We run a t test, to compare means.
+```{r}
+
+survived_index <- which(df$Survived==1)
+
+test <- t.test(df$Age[survived_index], df$Age[-survived_index])
+test$p.value
+```
+p value of ttest equals `r test$p.value`, so we reject null hypothesis that there is no statistical significant difference between age for survived, and not.
+
+Mean age of not survived ones is aroud 30, which is smaller that survivals (28).
+
+
+
+
+
+## todo model
+```{r}
+#| echo: false
+
 df <- read.csv("train.csv")
 df$Survived <- factor(df$Survived)
 df$Sex <- factor(df$Sex)
@@ -35,9 +83,15 @@ pred[probs > .5] <- 1
 table(pred, test_data$Survived)
 ```
 
-f1 score
-
 ```{r}
-library(ModelMetrics)
-f1Score(test_data$Survived, pred)
+#| echo: false
+head(train_data)
+
+glm1 <- glm(Survived~Pclass+Sex+Age,family='binomial',data = train_data)
+glm1 %>% summary()
+
+
 ```
+
+
+
