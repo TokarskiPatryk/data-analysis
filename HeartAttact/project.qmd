@@ -1,0 +1,523 @@
+---
+title: "Analiza zbioru danych pacjentów podejrzewających u siebie zawał serca"
+author: 
+  - Tymoteusz Romanowicz
+  - Patryk Tokarski
+format: 
+  html: 
+    self-contained: true
+    toc: true
+    toc-title: Spis treści
+editor: visual
+embed-resources: true
+execute: 
+  warning: false
+  echo: true 
+editor_options: 
+  chunk_output_type: inline
+bibliography: references.bib
+---
+
+## Źródło danych
+
+### Zawartość zbioru
+
+Dane do zbioru były zbierane podczas transportu karetką do szpitala pacjentów, którzy podejrzewali u siebie obecność zawału serca. Zawał mięśnia sercowego, potocznie zwany atakiem serca to martwica mięśnia sercowego spowodowana jego niedokrwieniem wskutek zamknięcia tętnicy wieńcowej doprowadzającej krew do serca. W Europie choroby układu krążenia są najczęstszą przyczyną zgonów. Z powodu schorzeń sercowo-naczyniowych w tym zawału mięśnia sercowego, umiera dwa razy więcej osób niż z powodu chorób nowotworowych.[@eurostat] Zbiór danych zawiera 1319 obserwacji i 9 cech, z czego jedna odnosi się do obecności ataku serca.
+
+Wiek, płeć, tętno, skurczowe ciśnienie tętnicze, rozkurczowe ciśnienie tętnicze, poziom cukru we krwi, CK-MB (kineaza kreatynowa) i troponina reprezentują pola wejściowe, podczas gdy pole wyjściowe odnosi się do obecności zawału serca, który jest podzielone na dwie kategorie (0 i 1); "0" odnosi się do braku zawału serca, podczas gdy "1" odnosi się do obecności zawału serca.
+
+### Przedstawienie zmiennych
+
+| Cecha                    | Opis                                                                                                           |
+|--------------------------|----------------------------------------------------------------------------------------------------------------|
+| Age                      | Wiek pacjenta w latach                                                                                         |
+| Gender                   | Płeć pacjenta (0 - kobieta, 1 - mężczyzna)                                                                     |
+| Heart Rate               | Maksymalne osiągnięte tętno (za prawidłowe tętno uznaje się przedział od 60 do 100 uderzeń serca na minutę)    |
+| Systolic blood pressure  | Spoczynkowe skurczowe ciśnienie krwi (w mmHg, podczas dojazdu do szpitala) (normalne wartości 90-120 mmHg)     |
+| Diastolic blood pressure | Spoczynkowe rozkurczowe ciśnienie krwi (w mmHg, podczas dojazdu do szpitala) (normalne wartości od 60-80 mmHg) |
+| Blood sugar              | Poziom cukru we krwi (normalne wartości do 140mg/dl)                                                           |
+| CK-MB                    | Enzym CK-MB (mężczyźni do 7,8 ng/mL, kobiety do 4,4 ng/mL). Jest to enzym kinazy kreatynowej.                  |
+| Troponin                 | Enzym troponiny (wartości normalne do 0,03 mikrogramów)                                                        |
+| Result                   | Obecność zawału (0 - brak zawału, 1 - zawał)                                                                   |
+
+: Cechy i ich opisy
+
+## Cele badawcze
+
+1.  Opracowanie modelu predykcyjnego, który na podstawie danych o pacjencie (wiek, płeć, tętno, ciśnienie krwi, poziom cukru we krwi, CK-MB, troponina), przewiduje czy miał on zawał serca.
+
+2.  Porównanie wartości cech którymi kieruje się model (m.in. CKMB i Troponina) do wartości referencyjnych stosowanych przez lekarzy do wykrycia zawału.
+
+3.  Używając technik wizualizacji danych wykryć wzorce i nietypowe zachowania w zbiorze danych, a także lepiej zrozumieć rozkłady poszczególnych zmiennych.
+
+## Przygotowanie zbioru, weryfikacja poprawnosci danych, brakujace wartosci
+
+```{r, echo=FALSE}
+library(tidyverse)
+library(foreign)
+library(tidyverse)
+library(plotly)
+library(corrplot)
+library(knitr)
+library(PerformanceAnalytics)
+library(pander)
+library(rstatix)
+library(GGally)
+library(rstatix)
+library(DALEX)
+library(foreign)
+library(dplyr)
+library(caret)
+library(rpart)
+library(rattle)
+library(apyramid)
+library(modelsummary)
+library(cvms)
+library(car)
+library(gridExtra)
+```
+
+```{r}
+set.seed(123)
+
+df <- read.arff("data/Medicaldataset.arff")
+df <- df %>% rename(
+  "Age" = age,
+  "Gender" = gender,
+  "Heart Rate" = impluse,
+  "Systolic.blood.pressure" = pressurehight,
+  "Diastolic.blood.pressure" = pressurelow,
+  "Blood.sugar" = glucose,
+  "CK.MB" = kcm,
+  "Troponin" = troponin,
+  "Result" = class
+)
+```
+
+```{r}
+nas <- colSums(is.na(df))
+kable(nas, col.names = "Liczba braków danych")
+```
+
+W żadnej z kolumn nie występują braki danych.
+
+```{r}
+# zmiana cech na factor
+df$Result <- ifelse(df$Result == "positive", 1, 0)
+
+df$Gender <- as.factor(df$Gender)
+df$Result <- as.factor(df$Result)
+
+df %>% get_summary_stats(show = c("min", "median","mean", "sd", "max")) %>% select(-n) %>%  pander()
+```
+
+Zmienna Heart Rate zawiera watości maksymalne 1111, które są błędem. Sprawdzimy dokładniej tę zmienną pod kątem wartości odstających.
+
+```{r echo=FALSE}
+identify_outliers(df['Heart Rate']) %>% 
+  as.data.frame() %>% 
+  filter(is.extreme == TRUE) %>% 
+  kable()
+
+df <- df[df$`Heart Rate` != 1111, ]
+```
+
+Występują trzy obserwacje, w których tętno wynosi 1111. Normalne tętno wynosi maksymalnie 100 uderzeń serca na minutę więc są to nieprawidłowe dane, najprawdopodobniej spowodowane błędem przy wpisywaniu danych, które należy usunąć.
+
+## Opis zbioru
+
+#### Cechy jakościowe
+
+```{r echo=FALSE}
+
+df2 <- df %>% select(Result, Gender)
+levels(df2$Result) <- c("Positive", "Negative")
+levels(df2$Gender) <- c("Female", "Male")
+df2 %>% summary() %>% pander()
+```
+
+W zbiorze jest 1316 obserwacji. Cech jakościowych jest dwie. Osób z zawałem serca jest 807, natomiast 509 ma wynik negatywny. Kobiet w zbiorze jest 447, a mężczyzn 869.
+
+#### Cechy ilościowe
+
+```{r echo=FALSE}
+df %>% get_summary_stats(show = c("min", "median","mean", "sd", "max")) %>% select(-n) %>%  pander()
+```
+
+Zbiór danych przedstawia zróżnicowany zakres wskaźników medycznych, odzwierciedlających parametry związane ze zdrowiem poszczególnych osób. Wiek waha się od 14 do 103 lat, co wskazuje na szeroki rozkład wiekowy. Pomiary tętna i ciśnienia krwi wykazują typowe wartości, z umiarkowaną zmiennością. W szczególności poziom cukru we krwi wykazuje znaczną zmienność, ze średnią 146,7 i znacznym odchyleniem standardowym 74,98. Markery CK.MB i Troponina, związane ze zdrowiem serca, wykazują znaczną zmienność, szczególnie w przypadku CK.MB, gdzie średnia jest znacznie wyższa niż mediana, co sugeruje potencjalną skośność. Te spostrzeżenia podkreślają znaczenie zbadania charakterystyki rozkładu każdej zmiennej dla lepszego zrozumienia zbioru danych.
+
+## Wizualizacja
+
+#### Piramida wieku
+
+```{r echo=FALSE}
+labs <- c(paste(seq(0, 100, by = 5), seq(0 + 5 - 1, 105 - 1, by = 5),
+                sep = "-"))
+dfpyr <- df
+dfpyr$AgeGroup <- cut(df$Age, breaks = c(seq(0, 100, by = 5), 105), labels = labs, right = FALSE)
+
+pyr <- age_pyramid(dfpyr, AgeGroup, split_by = Gender, proportional = TRUE)
+pyr + scale_fill_manual(values = c("#f8766d", "#00bfc4"), 
+                        labels = c("0" = "kobiety", "1" = "mężczyźni")) +
+  theme(legend.position = "right") + 
+  labs(x = "Grupy wiekowe", y = "Część całkowitej liczebności", fill = "Płeć")
+```
+
+Na powyższym wykresie widać, że rozkłady wieku wyglądają podobnie zarówno dla mężczyzn jak i kobiet, jednak rozkład wieku wśród płci żeńskiej charakteryzuje się znacznie mniejszą kurtozą. Najwięcej pacjentów znajduje się w przedziale wiekowym 60-64, co stanowi około 18% całego zbioru. Widzimy też, że liczebność mężczyzn jest zdecydowanie większa w przedziałach z środkowego obszaru, natomiast liczebość kobiet zaczyna minimalnie przeważać wśród osób najmłodszych i najstarszych.
+
+#### Histogram wieku z podziałem na płeć oraz obecność ataku serca
+
+```{r echo=FALSE}
+age_distr <- df %>% 
+  mutate(Gender2 = ifelse(Gender == "0", "female", "male")) %>% 
+  mutate(Result2 = ifelse(Result == "0", "negative", "positive"))
+
+ggplot(age_distr, aes(x = Age, fill = Gender2)) +
+  geom_histogram(binwidth = 5, color = "black", boundary=1) +
+    scale_x_continuous(breaks = seq(0, 100, by = 10)) +
+  facet_grid(Gender2 ~ Result2) +
+  labs(title = "Age Distribution by Gender and Result", x = "Age", y = "Frequency") + guides(fill = "none")
+```
+
+Wyraźnie widać, że rozkład mężczyzn z atakiem serca (lewy dolny histogram) przypomina rozkład normalny. Natomiast pozostałe 3 wykresy są do siebie podobne i także przypominają rozkład normalny, tylko z o wiele mniejszą kurtozą. Możemy zauważyć, że różnica między brakiem, a istnieniem zawału serca jest o wiele większa wśród mężczyzn. Naszą hipotezę sprawdzimy testem proporcji.
+
+#### Test proporcji dla obecności ataku serca ze względu na płeć
+
+Hipoteza zerowa zakłada, że procent pozytywnych przypadków ataku serca jest taki sam dla obu płci. Hipoteza alternatywna zakłada, że procent pozytywnych przypadków ataku serca jest różny dla obu płci.
+
+```{r}
+# Tworzenie tablicy przestawnej
+table <- table(df$Gender, df$Result)
+
+# Przeprowadzenie testu proporcji (z testem chi-kwadrat)
+result_prop_test <- prop.test(table)
+chi_square_test <- chisq.test(table)
+
+data.frame("Proportion test"=round(result_prop_test$p.value,3),
+           "Chi-Square test"=round(chi_square_test$p.value,3)) %>% pander()
+```
+
+Na podstawie testu chi-kwadrat jak i test proporcjonalności odrzucamy hipotezę o rowności procenta pozytywnych przypadków ataku serca ze względu na płeć. Wynika z tego, że większą szansę na atak serca mają mężczyźni.
+
+#### Wykres korelacji cech
+
+##### Dla przypadków z atakiem serca
+
+```{r warning=FALSE, echo=FALSE}
+
+df %>% filter(Result == 1) %>% 
+  select(c(-Result,-Gender)) %>%
+  chart.Correlation()
+```
+
+##### Dla przypadków bez ataku serca
+
+```{r warning=FALSE, echo=FALSE}
+df %>% filter(Result == 0) %>% 
+  select(c(-Result,-Gender)) %>%
+  chart.Correlation()
+```
+
+Powyższe wykresy są bardzo do siebie podobne. Jedyną wyraźną cechą różniącą je jest cecha CK.MB, która dla zdrowych pacjentów jest w zakresie 0-7, a dla osób z zawałem serca od 0-300. Warto również zwrócić uwagę na to, że stosunkowo silna korelacja występuje jedynie pomiędzy zmienną przechowującą ciśnienie skurczowe oraz rozkurczowe, co ma sens, ponieważ w praktyce miary te również są ze sobą powiązane. Wyklucza to jednak możliwość użycia obydwu zmiennych w przyszłych modelach.
+
+#### Histogram dla każdej cechy, z wizualnym podziałem na wynik
+
+```{r echo=FALSE}
+df %>% 
+  pivot_longer(cols = c(1, 3, 4, 5, 6, 7, 8), names_to = "variable", values_to = "value") %>% 
+  ggplot(aes(x = value, fill = Result)) +
+  geom_histogram(bins = 10, color = "black", alpha = 1) +
+  facet_wrap(~variable, scales = "free") +
+  labs(title = "Distribution of Variables by Result", x = "Value", y = "Frequency") +
+  scale_fill_discrete(labels=c("Negative", "Positive"))
+```
+
+### Wykres zależności CK.MB od Troponiny z podziałem na pacjentów z zawałem i bez
+
+```{r echo=FALSE}
+p <- ggplot(df, aes(x = CK.MB, y = Troponin, col = factor(Result))) + geom_point(alpha = 0.5) + scale_color_manual(values = c("1" = "red", "0" = "blue")) + labs(x = "CK.MB (skala logarytmiczna)", y = "Troponina (skala logarytmiczna)", col = "Wynik") + theme_minimal() + scale_y_log10() + scale_x_log10()
+
+ggplotly(p)
+```
+
+Na powyższym wykresie zależności CK.MB od Troponiny widać wyraźną granicę między pacjentami z zawałem serca i bez. Widać, że pacjenci z zawałem serca mają wyższe wartości obu cech. Może nam to sugerować że są to cechy, które mogą być przydatne w modelu.
+
+## Model
+
+### Wybór modelu
+
+Z racji tego, że nasz problem jest klasyfikacyjny, postanowiliśmy porównać ze sobą 3 modele:
+
+-   drzewo decyzyjne dla wszystkich zmiennych,
+
+-   drzewo decyzyjne bez CK.MB oraz Troponiny,
+
+-   regresja logistyczna dla CK.MB i Troponiny,
+
+-   regresja logistyczna dla reszty zmiennych
+
+#### Modele z `CK.MB` i `Troponin`
+
+##### Model regresji logistycznej
+
+Podział zbioru danych (80% dane treningowe i 20% dane testowe)
+
+```{r}
+podzial <- createDataPartition(y = df$Result, 
+                               times = 1, 
+                               p = 0.8, 
+                               list = F)
+train <- df[podzial, ]
+test <- df[-podzial, ]
+```
+
+```{r}
+modelbezlog <- glm(Result~CK.MB+Troponin, family = 'binomial', data = train)
+
+summary(modelbezlog)
+```
+
+```{r}
+p1 <- ggplot(df, aes(x = CK.MB, y = Troponin)) + geom_point() + ggtitle("Zmienne przed transformacją")
+p2 <- ggplot(df, aes(x = log(CK.MB), y = log(Troponin))) + geom_point() + ggtitle("Zmienne po transformacji")
+grid.arrange(p1, p2, ncol = 2)
+```
+
+```{r}
+model <- glm(Result~log(CK.MB)+log(Troponin), family = 'binomial', data = train)
+
+summary(model)
+```
+
+##### Testowanie założeń:
+
+1\) Zmienna objaśniająca przyjmuje dwie wartości (jest zmienną binarną)
+
+```{r}
+b <- as.data.frame(summary(train$Result))
+colnames(b) <- c("Result")
+kable(b)
+```
+
+Założenie jest spełnione, ponieważ zmienna `Result` przyjmuje tylko dwie wartości: 0 oraz 1.
+
+2\) Niezależność obserwacji
+
+Każda obserwacja odpowiada parametrom innego pacjenta, zatem założenie jest spełnione.
+
+3\) Brak współliniowości pomiędzy zmiennymi niezależnymi.
+
+```{r}
+mtest <- vif(model)
+kable(mtest)
+```
+
+Współczynniki testu na współliniowość są bliskie 1, więc nie mamy powodów do odrzucenia hipotezy o braku współliniowości.
+
+4\) Brak ekstremalnych wartości odstających.
+
+```{r}
+identify_outliers((train['CK.MB'])) %>% 
+  as.data.frame() %>% 
+  filter(is.extreme == TRUE) %>%
+  tail() %>% 
+  kable()
+```
+
+Wartości zmiennej `CK.MB` mają wartości ekstremalne, pomimo to, zdecydujemy się zachować te obserwacje w zbiorze danych i zbudować na ich podstawie model.
+
+5\) Odpowiednio duża liczebność próby.
+
+Zbiór treningowy zawiera 744 obserwacje, co jest wystarczającą ilością do zbudowania na jego podstawie modelu.
+
+```{r}
+probs <- predict(model, newdata = test, type = "response")
+pred <- rep(0, length(probs))
+pred[probs > .5] <- 1
+table1 <- table(test$Result, pred)
+
+cfm1 <- as.data.frame(table1)
+plot_confusion_matrix(cfm1, 
+                      target_col = "Var1", 
+                      prediction_col = "pred", 
+                      counts_col = "Freq")
+
+log_acc1 <- sum(diag(table1))/sum(table1)
+```
+
+Ten model ma dokładność na poziomie `r round(log_acc1*100, 2)`%.
+
+##### Model drzewa decyzyjnego
+
+##### Użycie cross validation do trenowania modelu
+
+```{r}
+# Trenowanie modelu z użyciem cross validation
+
+model2 <- caret::train(x= train[-9], 
+                      y=train[,9], 
+                      method = 'rpart', 
+                      trControl = trainControl(method = 'cv', number=5))
+```
+
+```{r}
+# Testowanie modelu i wyświetlenie tabeli pomyłek
+
+model_test <- predict(model2, test)
+model_test <- as.data.frame(model_test)
+
+table2 <- table(test$Result, model_test[,'model_test'])
+
+tree_acc1 <- sum(diag(table2))/sum(table2)
+
+cfm2 <- as.data.frame(table2)
+plot_confusion_matrix(cfm2, 
+                      target_col = "Var2", 
+                      prediction_col = "Var1", 
+                      counts_col = "Freq")
+log_acc2 <- sum(diag(table2))/sum(table2)
+```
+
+Ten model ma dokładność na poziomie `r round(log_acc2*100, 2)`%.
+
+```{r}
+fancyRpartPlot(model2$finalModel, caption='')
+```
+
+#### Modele bez zmiennych CK.MB i Troponin
+
+```{r}
+df2 <- df %>% 
+  select(Age, Gender, `Heart Rate`, Systolic.blood.pressure, Diastolic.blood.pressure, Blood.sugar, Result)
+```
+
+##### Drzewo decyzyjne
+
+```{r}
+podzial2 <- createDataPartition(y = df2$Result, 
+                                times = 1, 
+                                p = 0.8, 
+                                list = F)
+
+train2 <- df2[podzial2, ]
+test2 <- df2[-podzial2, ]
+
+model3 <- rpart(Result ~ ., method = "class", data = train2, minsplit = 100)
+
+fancyRpartPlot(model3, caption = "")
+```
+
+Dokładność
+
+```{r}
+model_test2 <- predict(model3, test2)
+model_test2 <- as.data.frame(model_test2)
+
+model_test2 <- model_test2 %>% 
+  mutate(Result = ifelse(`0` >= .5, 0, 1))
+
+tab3 <- table(test2$Result, model_test2$Result)
+tab3 <- as.matrix(tab3)
+tree_acc2 <- sum(diag(tab3))/sum(tab3)
+
+cfm3 <- as.data.frame(tab3)
+plot_confusion_matrix(cfm3, 
+                      target_col = "Var2", 
+                      prediction_col = "Var1", 
+                      counts_col = "Freq")
+log_acc3 <- sum(diag(tab3))/sum(tab3)
+```
+
+Ten model ma dokładność na poziomie `r round(log_acc3*100, 2)`%.
+
+##### Regresja logistyczna
+
+```{r}
+model4 <- glm(Result~., family = 'binomial', data = df2)
+
+summary(model4)
+
+probs <- predict(model4, newdata = test2, type = "response")
+pred <- rep(0, length(probs))
+pred[probs > .5] <- 1
+tab4 <- table(pred, test2$Result)
+log_acc2 <- sum(diag(tab4))/sum(tab4)
+
+cfm4 <- as.data.frame(tab4)
+plot_confusion_matrix(cfm4, 
+                      target_col = "Var2", 
+                      prediction_col = "pred", 
+                      counts_col = "Freq")
+
+log_acc4 <- sum(diag(tab4))/sum(tab4)
+```
+
+Ten model ma dokładność na poziomie `r round(log_acc4*100, 2)`%.
+
+W modelu regresji logistycznej tylko jedna zmienna jest statystycznie istotne (age) i oczywiście nie jest ona wytłumaczyć czy ktoś ma zawał serca tak dobrze jak w modelu drzewa decyzyjnego.
+
+### Podsumowanie efektywności modelu / jego przydatności
+
+```{r}
+modele <- c("Drzewo decyzyjne z CK.MB i Troponin", "Drzewo decyzyjne bez CK.MB i Troponin", "Regresja logistyczna z CK.MB i Troponin", "Regresja logistyczna bez CK.MB i Troponin")
+dokladnosci <- c(tree_acc1, tree_acc2, log_acc1, log_acc2)
+dokladnosc <- data.frame(modele, dokladnosci)
+colnames(dokladnosc) <- c("Model", "Dokładność")
+dokladnosc$Dokładność <- round(dokladnosc$Dokładność, 2)
+
+kable(dokladnosc)
+```
+
+Porównanie modeli regresji logistycznej
+
+```{r}
+modelsummary(list("Model z CK.MB i Troponiną (po transformacji)" = model, "Model z CK.MB i Troponiną (przed transformacją)" = modelbezlog, "Model złożony z pozostałych zmiennych" = model4), coef_omit = 2:11)
+```
+
+#### Wnioski
+
+Okazuje się, że drzewo decyzyjne ze zmiennymi CK.MB i Troponin jest najlepszym modelem, ponieważ ma największą dokładność.
+
+Zaskoczeniem było dla nas to, że reszta zmiennych ma tak mały wpływ na to czy pacjent ma zawał serca.
+
+Jednakże, patrząc na to, czym kierują się lekarze, przy badaniu pacjenta, to właśnie wartości tych dwóch czynników są najważniejsze i decydujące o istnieniu zawału.
+
+Drzewo decyzyjne używając tych dwóch zmiennych jest w stanie bardzo dobrze przewidzieć czy pacjent ma zawał serca, ponieważ jak widać na wykresie zależności CK.MB od Troponiny, punkty oznaczające pacjentów z wynikiem negatywnym układają się w wyraźny prostokąt, dookoła którego są pacjenci z wynikiem pozytywnym.
+
+```{r}
+ggplotly(p)
+```
+
+Modele stworzone bez zmiennych CK.MB i Troponiny mają o wiele gorszą dokładność. Jedyna zmienna, która w istotny sposób wpływa na wynik jest wiek, ale nie jest ona w stanie przewidzieć czy pacjent ma zawał serca tak dobrze jak w modelu ze zmiennymi CK.MB i Troponin.
+
+Być może gdybyśmy w dostępnych danych mieli takie wartości jak:
+
+-   czy dana osoba pali papierosy,
+
+-   poziom cholesterolu,
+
+-   czy dana osoba jest aktywna fizycznie,
+
+to moglibyśmy stworzyć lepszy model, który miałby większą dokładność.
+
+## Odpowiedź na pytania badawcze
+
+1.  Opracowanie modelu predykcyjnego, który na podstawie danych o pacjencie, przewiduje czy miał on zawał serca.
+
+    Udało nam się stworzyć model i uzyskać wysoką dokładność. Jednak przy większej i lepszej jakości danych, model mógłby być jeszcze lepszy.
+
+2.  Porównanie wartości cech którymi kieruje się model (m.in. CKMB i Troponina) do wartości referencyjnych stosowanych przez lekarzy do wykrycia zawału.
+
+    Lekarze stwierdzając świeży zawał mięśnia sercowego, stosują wartość odcięcia (czyli wartość powyżej 99 centyla zakresu referencyjnego). Dla CK.MB wynosi ona około $5.5 ng/ml$ ,a dla troponiny wartość odcięcia wacha się od $0.01 \mu g/l$ do $0.08 \mu g/l$ w zależności od producenta testu.[@jaffe2006]
+
+    W naszym modelu wartość, od której decydujemy czy ktoś ma zawał dla troponiny wynosi $0.015 \mu g/l$, a dla CK.MB $6.3 ng/ml$.
+
+    Zatem wartość troponiny w naszym modelu mieści się w dolnej granicy wartości referencyjnych stosowanych przez lekarzy. Natomiast model wymaga nieco większej wartości enzymu kineazy kreatynowej do stwierdzenia zawału serca niż sugerują to wartości referencyjne.
+
+3.  Używając technik wizualizacji danych wykryć wzorce i nietypowe zachowania w zbiorze danych, a także lepiej zrozumieć rozkłady poszczególnych zmiennych.
+
+    Wizualizacja danych pozwoliła nam zauważyć błędy w danych, po pozbyciu się których, otrzymaliśmy lepsze jakościowo dane. Dostrzegliśmy także zmienne, które mogły mieć dużą moc predykcyjną w stworzonym później modelu. Dowiedzieliśmy się także, że największą grupą w zbiorze są mężczyźni z zawałem serca, a najmniej liczna jest grupa kobiet bez zawału serca.
+
+## Podsumowanie
+
+Dzięki temu projektowi wykorzystaliśmy zdobyte na studiach wiadomości i umiejętności z zakresu analizy danych na prawdziwym zbiorze danych. Dokonaliśmy szczegółowej wizualizacji danych, dzięki której lepiej poznaliśmy nasze dane. Udało nam się także stworzyć model decyzyjny, który osiągnął wysoką skuteczność.
