@@ -1,0 +1,263 @@
+---
+title: "Detekcja samolotów ze zdjęć satelitarnych z użyciem modelu YOLOv8"
+author: "Patryk Tokarski"
+format: html
+editor_options: 
+  chunk_output_type: console
+execute: 
+  eval: false
+embed-resources: true
+---
+
+### Dane
+
+#### Zbiór danych
+
+Zbiór danych składa się z 3821 zdjęć satelitarnych, na których znajduje się 20 typów samolotów. W zbiorze jest 22341 oznaczonych obiektów. Zbiór danych pozyskałem z platformy Kaggle. Zdjęcia są w formacie jpg, a etykiety w formacie XML (PascalVOC). Zdjęcia są różnych rozmiarów, ale zazwyczaj mają rozmiar 800x800 pikseli.
+
+#### Przykładowe zdjęcie ze zbioru danych
+
+![](./PlanesDataset/images/985.jpg){width="400"}
+
+#### Etykiety
+
+Oznaczenia klas samolotów w zbiorze danych nie są równomierne. Najwięcej samolotów należy do klasy A16, a najmniej do klasy A18. Poniżej przedstawiam rozkład klas samolotów w zbiorze danych.
+
+![](./results/labels.jpg)
+
+Samoloty na zdjęciach są ułożone równomiernie po całej wielkości zdjęć. Natomiast rozkłady szerokości i wysokości prostokątów, zawierających samoloty są lekko prawostronnie skośne.
+
+![](./results/labels_correlogram.jpg)
+
+#### Przygotowanie
+
+W pierwotnym zbiorze był podział tylko na zbiór uczący i testowy. W celu przeprowadzenia treningu modelu YOLO na zbiorze danych, z części zbioru treningowego utworzyłem zbiór walidacyjny.
+
+Ostatecznie otrzymałem proporcje:
+
+-   Treningowy - 2778 zdjęć (72%)
+
+-   Walidacyjny - 544 zdjęć (14%)
+
+-   Testowy - 521 zdjęć (14%)
+
+Koniecznym krokiem było także przekonwertowanie etykiet z formatu XML (PascalVOC) na format txt (stosowany w YOLO). W tym celu napisałem krótki skrypt w Pythonie, który przekształca etykiety z formatu XML na format txt (skrypt znajduje się na końcu raportu).
+
+W celu przeprowadzenia treningu modelu YOLO na nowym zbiorze danych, musiałem także przygotować plik data.yaml, który zawiera informacje o lokalizacji danych, plików z podziałami danych oraz etykietach. Zbiór danych składa się z 20 klas: A1, A2, A3, ..., A20.
+
+Gdy miałem już przygotowany zbiór danych, mogłem przystąpić do wyboru modeli, a następnie treningów modeli YOLO. W tym celu skorzystałem z biblioteki `ultralytics`, która ułatwia dotrenowywanie modelu YOLO na nowym zbiorze danych.
+
+Trening modelu YOLO przeprowadziłem na platformie Kaggle, ponieważ mój komputer nie był w stanie przeprowadzić go w rozsądnym czasie (czas trwania jednego epoch'a wynosił 20 minut :) ).
+
+### Modele
+
+W ramach projektu postanowiłem wybrać dwa modele w dwóch wariantach: z zamrożeniem warstw i bez zamrożenia warstw. Modele, które wybrałem to:
+
+-   YOLOv8n
+
+-   YOLOv8m
+
+v8m jest zdecydowanie większym modelem od v8n (różnica to prawie 23 miliony parametrów). Pozwoli mi to sprawdzić, czy większy model będzie w stanie lepiej nauczyć się zbioru danych. Zamrażanie warstw pozwoli mi na szybsze trenowanie modelu, ale może skutkować gorszymi wynikami.
+
+### Metryki
+
+Przy podsumowywaniu modeli kierowałem się dwoma metrykami: mAP50 i mAP50-95.
+
+mAP50 mierzy skuteczność detekcji dla dopasowań, których poziom nałożenia się oryginalnej etykiety, a etykiety przewidzianej przez model wynosi co najmniej 50%. Natomiast mAP50-95 ocenia model w sposób bardziej szczegółowy i kompleksowy, uwzględniając różne poziomy dokładności dopasowania. Te metryki są domyślnie wyświetlanie przy treningu modeli YOLOv8.
+
+### Trening i test modeli - schemat
+
+Wszystkie modele trenowane były przez 100 epok, na platformie Kaggle, używając dodatkowo karty graficznej P100. Rozmiar obrazu wynosił 640x640. Resztę parametrów pozostawiłem domyślnych, tak aby program wybrał je sam.
+
+Po wczytaniu bazowego modelu, douczamy model funkcją `train`, a następnie testujemy funkcją `val` podając odpowiedni split zadeklarowany w pliku data.yaml.
+
+```{python }
+from ultralytics import YOLO
+
+model = YOLO('<nazwa_modelu>')
+
+#trening
+train = model.train(data='/kaggle/input/planesdataset/data.yaml', epochs=100, imgsz=640, verbose = False, device=0) # w niektórych przypadkach dodatkowo freeze=<ilość_warstw_do_zamrożenia>
+
+#test
+check = model.val(data='/kaggle/input/planesdataset/data.yaml', split='test', imgsz=640, verbose = False)
+```
+
+Aby dokonać predykcji modelu należy użyć funkcji `predict`
+
+```{python }
+model.predict('<path_to_image>', save=True)
+```
+
+#### Trening modelu yolov8n.pt
+
+```{python }
+from ultralytics import YOLO
+
+model1 = YOLO('yolov8n.pt')
+train = model1.train(data='/kaggle/input/planesdataset/data.yaml', epochs=100, imgsz=640, verbose = False, device=0)
+```
+
+Trening trwał 1,2h. W trakcie treningu model osiągnął mAP50 na zbiorze walidacyjnym na poziomie 0.9. Na zbiorze testowym model osiągnął mAP50 na poziomie 0.97 i mAP50-95 równe 0.80.
+
+![](.\results\model1\train_results\results.png)
+
+Znormalizowana confusion matrix dla zbioru testowego.
+
+![](.\results\model1\train_results\confusion_matrix_normalized.png)
+
+Cztery przykładowe predykcje na zbiorze testowym:
+
+![oryginał](results\model1\val_batch0_labels.jpg)
+
+![predykcja](results\model1\val_batch0_pred.jpg)
+
+#### Trening modelu yolov8n.pt z zamrożeniem 9 z 22 głównych warstw
+
+```{python }
+from ultralytics import YOLO
+
+model1 = YOLO('yolov8n.pt')
+train2 = model2.train(data='/kaggle/input/planesdataset/data.yaml', epochs=100, imgsz=640, verbose = False, device=0, freeze=9, cache=True)
+```
+
+Trening trwał 0,717h. W trakcie treningu model osiągnął mAP50 na zbiorze walidacyjnym na poziomie 0.887. Na zbiorze testowym model osiągnął mAP50 na poziomie 0.909 i mAP50-95 równe 0.698.
+
+![](.\results\model2\train\results.png)
+
+Znormalizowana confusion matrix dla zbioru testowego.
+
+![](.\results\model2\train\confusion_matrix_normalized.png)
+
+Cztery przykładowe predykcje na zbiorze testowym:
+
+![oryginał](results\model2\val_batch0_labels.jpg)
+
+![predykcja](results\model2\val_batch0_pred.jpg)
+
+#### Trening modelu yolov8m.pt
+
+```{python }
+from ultralytics import YOLO
+
+model1 = YOLO('yolov8m.pt')
+train1 = model1.train(data='/kaggle/input/planesdataset/data.yaml', epochs=100, imgsz=640, verbose = False, device=0, cache=True)
+```
+
+Trening trwał 3,125h. W trakcie treningu model osiągnął mAP50 na zbiorze walidacyjnym na poziomie 0.981. Na zbiorze testowym model osiągnął mAP50 na poziomie 0.981 i mAP50-95 równe 0.814.
+
+![](.\results\model3\train\results.png)
+
+Znormalizowana confusion matrix dla zbioru testowego.
+
+![](.\results\model3\train\confusion_matrix_normalized.png)
+
+Cztery przykładowe predykcje na zbiorze testowym:
+
+![oryginał](results\model3\val_batch0_labels.jpg)
+
+![predykcja](results\model3\val_batch0_pred.jpg)
+
+#### Trening modelu yolov8m.pt z zamrożeniem 9 z 22 głównych warstw
+
+```{python }
+from ultralytics import YOLO
+
+model1 = YOLO('yolov8m.pt')
+train1 = model1.train(data='/kaggle/input/planesdataset/data.yaml', epochs=100, imgsz=640, verbose = False, device=0, cache=True, freeze=9)
+```
+
+Trening trwał 1,862h. W trakcie treningu model osiągnął mAP50 na zbiorze walidacyjnym na poziomie 0.963. Na zbiorze testowym model osiągnął mAP50 na poziomie 0.965 i mAP50-95 równe 0.784.
+
+![](.\results\model4\train\results.png)
+
+Znormalizowana confusion matrix dla zbioru testowego.
+
+![](.\results\model4\train\confusion_matrix_normalized.png)
+
+Cztery przykładowe predykcje na zbiorze testowym:
+
+![oryginał](results\model4\val_batch0_labels.jpg)
+
+![predykcja](results\model4\val_batch0_pred.jpg)
+
+### Wyniki
+
+#### Tabelka
+
+| Model            | GFLOPs | Parametrów | Czas treningu | mAP50 (test) | mAP50-95 (test) |
+|------------|------------|------------|------------|------------|------------|
+| YOLOv8n          | 8.215  | 3 014 748  | 1.178h        | 0.98         | 0.8             |
+| YOLOv8n + freeze | 8.215  | 3 014 748  | 0.717h        | 0.91         | 0.698           |
+| YOLOv8m          | 79.127 | 25 867 900 | 3.125h        | 0.981        | 0.814           |
+| YOLOv8m + freeze | 79.127 | 25 867 900 | 1.862         | 0.965        | 0.784           |
+
+#### Wnioski
+
+Model YOLOv8n wypadł moim zdaniem najlepiej. Jego trening trwał lekko powyżej godziny, a wyniki jakie osiągał prawie dorównywały modelowi v8m ze zdecydowanie większą ilością parametrów.
+
+Modele, w których początkowe warstwy były zamrażane, znacznie szybciej osiągały 100 epoch. Jednak ich wyniki odstawały od zwykłych modeli.
+
+Model YOLOv8m osiągnął najlepsze wyniki, jednak jego trening trwał ponad 3 godziny. Być może gdyby w zbiorze danych było więcej zdjęć, różnice między modelami byłyby bardziej zauważalne.
+
+### Źródła
+
+Zbiór danych: [Kaggle Military Aircraft Recognition dataset](https://www.kaggle.com/datasets/khlaifiabilel/military-aircraft-recognition-dataset/data)
+
+Oficjalna dokumentacja pakietu `ultralytics`: <https://docs.ultralytics.com/>
+
+W szczególności:
+
+-   [Trening modelu](https://docs.ultralytics.com/modes/train/)
+
+-   [Walidacja modelu](https://docs.ultralytics.com/modes/val/)
+
+-   [Predykcja modelu](https://docs.ultralytics.com/modes/predict)
+
+-   [Metryki w modelu YOLO](https://docs.ultralytics.com/guides/yolo-performance-metrics/)
+
+#### Skrypt do konwersji etykiet z formatu VOC (xml) do formatu YOLO (txt)
+
+```{python}
+#| eval: False
+
+import os
+import xml.etree.ElementTree as ET
+
+def parse_xml_to_txt(xml_file, txt_file):
+  tree = ET.parse(xml_file)
+  root = tree.getroot()
+
+  with open(txt_file, 'w') as f:
+    width_img = int(root.find('size').find('width').text)
+    height_img = int(root.find('size').find('height').text)
+    if width_img == 0 or height_img == 0:
+      print(f"Invalid image size in {xml_file}")
+      return 
+    
+    for obj in root.findall('object'):
+      name = obj.find('name').text
+      if name.startswith('A') and name[1:].isdigit():
+        name_num = name[1:]
+        name_num = int(name_num)-1 
+        bndbox = obj.find('bndbox')
+        xmin = bndbox.find('xmin').text
+        ymin = bndbox.find('ymin').text
+        xmax = bndbox.find('xmax').text
+        ymax = bndbox.find('ymax').text
+        
+        width = int(xmax) - int(xmin)
+        height = int(ymax) - int(ymin)
+        x_center = (int(xmin) + int(xmax)) / 2
+        y_center = (int(ymin) + int(ymax)) / 2
+      
+        
+        f.write(f"{name_num} {x_center/width_img} {y_center/height_img} {width/width_img} {height/height_img}\n")
+
+lista = os.listdir('PlanesDataset\\Annotations')
+for xml_file in lista:
+    xml_file = os.path.join('PlanesDataset\\Annotations', xml_file)
+    txt_file = xml_file.replace('.xml', '.txt').replace('Annotations', 'labels')
+    parse_xml_to_txt(xml_file, txt_file)
+
+```
