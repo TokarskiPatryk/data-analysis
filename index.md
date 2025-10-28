@@ -3,4 +3,4 @@
 - [Heart Attact Prediciton](/HeartAttact/HeartAttactPrediction.html)
 - [Time series analysis](/Time-Series/projekt_SC.html)
 - [BigBasket (e-commerce shop)](/BigBasket/big-basket.html)
-
+- [Aircraft detection using YOLO](/AircraftDetection/project.html)
